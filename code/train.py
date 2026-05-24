@@ -212,7 +212,8 @@ def stage2_proxy_ridge(train: pd.DataFrame, clim_dict: dict, force: bool = False
 
 def stage3_build_features(
     train, clim_dict, month_dict, sstat_dict, smo_dict, proxy_ridge,
-    preproc_artifacts, region_gap_dict=None, region_test_months=None, force=False,
+    preproc_artifacts, region_gap_dict=None, region_test_months=None,
+    smo_stats_dict=None, force=False,
 ):
     key = feature_cache_key()
     log.info(f"[Stage 3] cache key={key}")
@@ -234,6 +235,7 @@ def stage3_build_features(
         preproc_artifacts=preproc_artifacts,
         region_gap_dict=region_gap_dict,
         region_test_months=region_test_months,
+        smo_stats_dict=smo_stats_dict,
     )
 
     if USE_CACHE:
@@ -359,10 +361,11 @@ def main(from_stage: int = 0, force: bool = False):
     else:
         clim = load_climatology()
 
-    clim_dict  = clim["clim_dict"]
-    month_dict = clim["month_dict"]
-    sstat_dict = clim["sstat_dict"]
-    smo_dict   = clim["smo_dict"]
+    clim_dict      = clim["clim_dict"]
+    month_dict     = clim["month_dict"]
+    sstat_dict     = clim["sstat_dict"]
+    smo_dict       = clim["smo_dict"]
+    smo_stats_dict = clim.get("smo_stats_dict", None)
 
     # ── Stage 2 ──────────────────────────────────────────────────────────────
     if from_stage <= 2:
@@ -383,6 +386,7 @@ def main(from_stage: int = 0, force: bool = False):
             preproc_artifacts=preproc_artifacts,
             region_gap_dict=region_gap_dict,
             region_test_months=region_test_months,
+            smo_stats_dict=smo_stats_dict,
             force=force,
         )
     else:

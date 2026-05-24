@@ -91,7 +91,7 @@ def compute_climatology(train: pd.DataFrame) -> dict:
             sstat_dict[region]["last_score"]       = last_sc
             sstat_dict[region]["last_date_ordinal"] = last_ord
 
-    # 4. Monthly score means
+    # 4. Monthly score means (used for fw_score_mo_mean feature)
     reg_score_monthly = (
         scored.groupby(["region_id", "month"])["score"]
         .mean()
@@ -103,16 +103,40 @@ def compute_climatology(train: pd.DataFrame) -> dict:
         for r, grp in reg_score_monthly.groupby("region_id")
     }
 
+    # 5. Per-region-month score quantiles (EDA Part 2 Section B & D)
+    # Provides a stable historical prior that outperforms score lag for
+    # the majority of test regions (gap ≥ 40w).
+    reg_mo_stats = (
+        scored.groupby(["region_id", "month"])["score"]
+        .agg(
+            mean    = "mean",
+            q25     = lambda x: float(np.percentile(x, 25)),
+            q75     = lambda x: float(np.percentile(x, 75)),
+            q90     = lambda x: float(np.percentile(x, 90)),
+            nonzero = lambda x: float((x > 0).mean()),
+            severe  = lambda x: float((x >= 3).mean()),
+        )
+        .reset_index()
+    )
+    smo_stats_dict: dict = {}
+    for region, grp in reg_mo_stats.groupby("region_id"):
+        smo_stats_dict[region] = (
+            grp.set_index("month")[["mean", "q25", "q75", "q90", "nonzero", "severe"]]
+            .to_dict("index")
+        )
+
     log.info(f"  clim_dict: {len(clim_dict)} regions")
     log.info(f"  month_dict: {len(month_dict)} regions")
     log.info(f"  sstat_dict: {len(sstat_dict)} regions")
     log.info(f"  smo_dict: {len(smo_dict)} regions")
+    log.info(f"  smo_stats_dict: {len(smo_stats_dict)} regions")
 
     return dict(
         clim_dict=clim_dict,
         month_dict=month_dict,
         sstat_dict=sstat_dict,
         smo_dict=smo_dict,
+        smo_stats_dict=smo_stats_dict,
     )
 
 

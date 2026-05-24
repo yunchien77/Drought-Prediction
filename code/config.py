@@ -92,17 +92,40 @@ N_PROXY_SIGS             = 7
 PROXY_SAMPLES_PER_REGION = 40
 
 # Increment when feature logic changes to invalidate the feature cache.
-FEATURE_VERSION = 14
+FEATURE_VERSION = 16
 
 # Score autocorrelation base (ACF ≈ 0.96^lag per EDA Section 2)
 SCORE_ACF_BASE = 0.96
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# EWMA Features
+# ═════════════════════════════════════════════════════════════════════════════
+
+# Exponentially Weighted Moving Average at multiple decay spans.
+# Weights recent observations more than rolling means, capturing rapidly
+# developing droughts. Adds len(METEO_COLS) × len(EWMA_SPANS) = 9 × 4 = 36 features.
+USE_EWMA   = True
+EWMA_SPANS = [7, 14, 28, 91]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Per-Region-Month Historical Score Statistics
+# ═════════════════════════════════════════════════════════════════════════════
+
+# EDA Part 2 Section B & D: 29-43% of (region, month) pairs deviate >0.2 from
+# the region overall mean. Monthly quantiles are a stable historical prior that
+# outperforms score lag for gap ≥ 40w (majority of test regions).
+# Adds 8 features: mo_q25, mo_q75, mo_q90, mo_nonzero, mo_severe (current month)
+#                   fw_mo_mean, fw_mo_q75, fw_mo_nonzero (forecast month)
+USE_MONTHLY_SCORE_STATS = True
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # General training settings
 # ═════════════════════════════════════════════════════════════════════════════
 
-SEED                 = 42
+SEED                 = 10
 N_PRED               = 5     # forecast horizons (fw = 1..5 weeks)
 N_FOLDS              = 5
 N_PH_FOLDS           = 4     # walk-forward folds for the main model

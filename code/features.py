@@ -6,8 +6,36 @@ from config import (
     METEO_COLS, COL_IDX, N_METEO,
     WINDOW_SIZES, TREND_COLS, FEATURE_NAMES_PATH,
     SCORE_ACF_BASE,
+    USE_EWMA, EWMA_SPANS,
+    USE_MONTHLY_SCORE_STATS,
 )
 from proxy import get_proxy_scores
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EWMA helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _ewma(arr: np.ndarray, span: int) -> np.ndarray:
+    """Exponentially weighted moving average (most recent = highest weight).
+
+    Returns (n_cols,) float32 — EWMA for each meteorological column.
+    alpha = 2 / (span + 1); weight[k] ∝ (1-alpha)^(n-1-k), k=0 oldest.
+    """
+    n = len(arr)
+    if n == 0:
+        ncols = arr.shape[1] if arr.ndim > 1 else N_METEO
+        return np.zeros(ncols, dtype=np.float32)
+    alpha = 2.0 / (span + 1.0)
+    k = np.arange(n, dtype=np.float64)
+    w = (1.0 - alpha) ** (n - 1.0 - k)
+    wsum = w.sum()
+    if wsum < 1e-12:
+        return (np.nanmean(arr, axis=0) if arr.ndim > 1
+                else np.array([np.nanmean(arr)])).astype(np.float32)
+    if arr.ndim == 2:
+        return (np.nansum(arr * w[:, None], axis=0) / wsum).astype(np.float32)
+    return np.array([float(np.nansum(arr * w) / wsum)], dtype=np.float32)
 
 
 def build_feature_names() -> list[str]:
@@ -42,6 +70,20 @@ def build_feature_names() -> list[str]:
     names += ["forecast_week", "fw_sin", "fw_cos"]
     names += ["last_known_score", "gap_weeks", "score_lag_decayed"]
     names += ["month_dist_to_test", "is_test_season"]
+
+    # ── 11. EWMA features ─────────────────────────────────────────────────────
+    if USE_EWMA:
+        for s in EWMA_SPANS:
+            for col in METEO_COLS:
+                names.append(f"{col}_ewma_{s}d")
+
+    # ── 12. Per-region-month historical score statistics ──────────────────────
+    if USE_MONTHLY_SCORE_STATS:
+        names += [
+            "mo_q25", "mo_q75", "mo_q90", "mo_nonzero", "mo_severe",
+            "fw_mo_mean", "fw_mo_q75", "fw_mo_nonzero",
+        ]
+
     return names
 
 
@@ -64,9 +106,10 @@ def make_features(
     smo:           dict,
     forecast_week: int,
     proxy_ridge,
-    last_known_score: float = float("nan"),
-    gap_weeks:        float = 52.0,
-    test_month:       int   = 0,
+    last_known_score: float       = float("nan"),
+    gap_weeks:        float       = 52.0,
+    test_month:       int         = 0,
+    smo_stats:        dict | None = None,
 ) -> np.ndarray:
     """Build a (N_FEATURES,) float32 feature vector; NaN/Inf replaced with 0."""
     feats = []
@@ -199,6 +242,29 @@ def make_features(
         dist = 3  # neutral default when test month is unknown
     feats.append(float(dist))
     feats.append(float(1 if dist <= 2 else 0))
+
+    # ── 11. EWMA features ─────────────────────────────────────────────────────
+    if USE_EWMA:
+        for s in EWMA_SPANS:
+            tail = window_arr[-s:] if n >= s else window_arr
+            feats.extend(_ewma(tail, s).tolist())
+
+    # ── 12. Per-region-month historical score statistics ──────────────────────
+    if USE_MONTHLY_SCORE_STATS:
+        fw_month = ((last_month - 1 + (forecast_week - 1) // 4) % 12) + 1
+        if smo_stats is not None:
+            mo_s = smo_stats.get(last_month, {})
+            fw_s = smo_stats.get(fw_month, {})
+        else:
+            mo_s, fw_s = {}, {}
+        feats.append(float(mo_s.get("q25",     ss.get("reg_q25",     0.0))))
+        feats.append(float(mo_s.get("q75",     ss.get("reg_q75",     1.0))))
+        feats.append(float(mo_s.get("q90",     ss.get("reg_q90",     2.0))))
+        feats.append(float(mo_s.get("nonzero", ss.get("reg_nonzero", 0.4))))
+        feats.append(float(mo_s.get("severe",  0.10)))
+        feats.append(float(fw_s.get("mean",    ss.get("reg_mean",    0.5))))
+        feats.append(float(fw_s.get("q75",     ss.get("reg_q75",     1.0))))
+        feats.append(float(fw_s.get("nonzero", ss.get("reg_nonzero", 0.4))))
 
     arr = np.array(feats, dtype=np.float32)
     return np.nan_to_num(arr, nan=0.0, posinf=5.0, neginf=-5.0)

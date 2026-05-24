@@ -39,15 +39,45 @@ def _date_str_to_ordinal(s) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# NaN interpolation
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _interpolate_meteo(arr: np.ndarray) -> np.ndarray:
+    """Linear interpolation of NaN values in a (T, N_METEO) array.
+
+    Uses np.interp on each column independently. Leading/trailing NaNs are
+    filled with the nearest valid value (no extrapolation).
+    """
+    if arr.ndim != 2 or arr.shape[0] == 0:
+        return arr
+    out = arr.copy()
+    n = out.shape[0]
+    x_all = np.arange(n, dtype=np.float64)
+    for col in range(out.shape[1]):
+        col_vals = out[:, col]
+        valid = ~np.isnan(col_vals)
+        if valid.sum() < 2:
+            if valid.any():
+                out[:, col] = col_vals[valid][0]
+            continue
+        x_valid = x_all[valid]
+        y_valid = col_vals[valid]
+        out[:, col] = np.interp(x_all, x_valid, y_valid)
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Training worker
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _worker_train_region(args: tuple):
     """Process one region and return (X, y, regions, time_keys, fw_keys, month_keys)."""
     (region, meteo, months, dates, scores,
-     rb, rm_df, ss, smo, proxy_ridge,
+     rb, rm_df, ss, smo, smo_stats, proxy_ridge,
      sample_frac, max_win, seed_offset,
      region_gap_wk, test_month) = args
+
+    meteo = _interpolate_meteo(meteo)
 
     score_idxs = np.where(~np.isnan(scores))[0]
     if len(score_idxs) < 10:
@@ -122,6 +152,7 @@ def _worker_train_region(args: tuple):
                 last_known_score=last_sc,
                 gap_weeks=gap_wk,
                 test_month=test_month,
+                smo_stats=smo_stats,
             )
             X_list.append(fv)
             y_list.append(float(scores[target_idx]))
@@ -151,8 +182,9 @@ def _worker_train_region(args: tuple):
 
 def _worker_test_region(args: tuple):
     """Build N_PRED feature vectors for one test region."""
-    region, meteo, months, dates, rb, rm_df, ss, smo, proxy_ridge, test_month = args
+    region, meteo, months, dates, rb, rm_df, ss, smo, smo_stats, proxy_ridge, test_month = args
 
+    meteo = _interpolate_meteo(meteo)
     last_sc  = ss.get("last_score", ss.get("reg_mean", 0.5))
     last_ord = ss.get("last_date_ordinal", 0)
 
@@ -171,6 +203,7 @@ def _worker_test_region(args: tuple):
             last_known_score=last_sc,
             gap_weeks=gap_wk,
             test_month=test_month,
+            smo_stats=smo_stats,
         )
         rows.append(fv)
     return region, np.array(rows, dtype=np.float32)
@@ -208,6 +241,7 @@ def build_training_dataset(
     preproc_artifacts:  tuple | None = None,
     region_gap_dict:    dict | None  = None,
     region_test_months: dict | None  = None,
+    smo_stats_dict:     dict | None  = None,
 ) -> tuple[np.ndarray, ...]:
     """Parallel construction of the training feature matrix.
 
@@ -245,6 +279,7 @@ def build_training_dataset(
             month_dict.get(region, None),
             sstat_dict.get(region, {}),
             smo_dict.get(region, {}),
+            smo_stats_dict.get(region, {}) if smo_stats_dict else None,
             proxy_ridge,
             sample_frac,
             max_win,
@@ -296,6 +331,7 @@ def build_test_features(
     n_workers:          int          = N_WORKERS,
     preproc_artifacts:  tuple | None = None,
     region_test_months: dict | None  = None,
+    smo_stats_dict:     dict | None  = None,
 ) -> dict[str, np.ndarray]:
     """Parallel construction of test features; returns {region: (N_PRED, N_FEATURES)}."""
     log.info(f"Building test features (workers={n_workers}) ...")
@@ -315,6 +351,7 @@ def build_test_features(
             month_dict.get(region, None),
             sstat_dict.get(region, {}),
             smo_dict.get(region, {}),
+            smo_stats_dict.get(region, {}) if smo_stats_dict else None,
             proxy_ridge,
             t_month,
         ))

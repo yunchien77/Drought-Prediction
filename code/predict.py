@@ -68,6 +68,7 @@ def _load_region_gap_dict() -> dict[str, float]:
 def _build_or_load_test_features(
     test, clim_dict, month_dict, sstat_dict, smo_dict, proxy_ridge,
     preproc_artifacts, region_test_months=None, force_rebuild=False,
+    smo_stats_dict=None,
 ):
     key = feature_cache_key()
     log.info(f"[cache] test key={key}")
@@ -83,6 +84,7 @@ def _build_or_load_test_features(
         test, clim_dict, month_dict, sstat_dict, smo_dict, proxy_ridge,
         preproc_artifacts=preproc_artifacts,
         region_test_months=region_test_months,
+        smo_stats_dict=smo_stats_dict,
     )
     if USE_CACHE:
         p = save_to_cache(test_features, "test_features", key)
@@ -118,10 +120,11 @@ def main(output_path=None, force_rebuild=False):
     lgbm_models, calibrator, _ = load_models()
     preproc_artifacts          = _load_preproc()
 
-    clim_dict  = clim["clim_dict"]
-    month_dict = clim["month_dict"]
-    sstat_dict = clim["sstat_dict"]
-    smo_dict   = clim["smo_dict"]
+    clim_dict      = clim["clim_dict"]
+    month_dict     = clim["month_dict"]
+    sstat_dict     = clim["sstat_dict"]
+    smo_dict       = clim["smo_dict"]
+    smo_stats_dict = clim.get("smo_stats_dict", None)
 
     # ── Build test features ────────────────────────────────────────────────────
     test_features = _build_or_load_test_features(
@@ -129,6 +132,7 @@ def main(output_path=None, force_rebuild=False):
         preproc_artifacts=preproc_artifacts,
         region_test_months=region_test_months,
         force_rebuild=force_rebuild,
+        smo_stats_dict=smo_stats_dict,
     )
     log.info(f"  Test features: {len(test_features)} regions")
 
