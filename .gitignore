@@ -4,5 +4,6 @@ submission*
 .claude/*
 models/*/*.pkl
 models/*.pkl
+models/*
 *.pkl
 **/__pycache__/**

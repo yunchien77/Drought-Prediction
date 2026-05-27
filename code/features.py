@@ -40,7 +40,24 @@ def build_feature_names() -> list[str]:
               "reg_score_mo_mean", "fw_score_mo_mean"]
     names += ["sin_doy", "cos_doy", "sin_month", "cos_month", "month_raw", "quarter"]
     names += ["forecast_week", "fw_sin", "fw_cos"]
+
+    # ── Original lag features ─────────────────────────────────────────────────
     names += ["last_known_score", "gap_weeks", "score_lag_decayed"]
+
+    # ── NEW: extended score lag features ─────────────────────────────────────
+    names += [
+        "last_score_lag1",           # score 1 week before last observation
+        "last_score_lag2",           # score 2 weeks before
+        "last_score_lag4",           # score 4 weeks before
+        "score_ewma_4w",             # exponential MA over last 4 scored weeks
+        "score_trend_8w",            # linear slope over last 8 scored weeks
+        "score_consecutive_nonzero", # drought persistence: consecutive non-zero weeks
+        "score_lag1_decayed",        # lag1 * ACF^(gap-1)
+        "score_lag2_decayed",        # lag2 * ACF^(gap-2)
+        "gap_weeks_sqrt",            # sqrt transform of gap (diminishing returns)
+        "gap_weeks_log1p",           # log1p transform of gap
+    ]
+
     names += ["month_dist_to_test", "is_test_season"]
     return names
 
@@ -183,20 +200,53 @@ def make_features(
     feats.append(float(np.cos(2 * np.pi * forecast_week / 5)))
 
     # ── 9. Score lag features ─────────────────────────────────────────────────
-    lks = last_known_score if np.isfinite(last_known_score) else ss.get("reg_mean", 0.5)
-    gw  = gap_weeks if np.isfinite(gap_weeks) else 52.0
+    reg_mean = float(ss.get("reg_mean", 0.5))
+    lks = last_known_score if np.isfinite(last_known_score) else reg_mean
+    gw  = gap_weeks        if np.isfinite(gap_weeks)        else 52.0
+
     feats.append(float(lks))
     feats.append(float(gw))
     feats.append(float(lks * SCORE_ACF_BASE ** gw))
 
+    # ── NEW: extended score lag features ─────────────────────────────────────
+    # Read from ss (populated by climatology.py at region level).
+    # During training, these reflect the state at the training window's cutoff;
+    # during inference they reflect the last known state from train data.
+    l1 = float(ss.get("last_score_lag1", lks))
+    l2 = float(ss.get("last_score_lag2", lks))
+    l4 = float(ss.get("last_score_lag4", lks))
+    if not np.isfinite(l1): l1 = lks
+    if not np.isfinite(l2): l2 = lks
+    if not np.isfinite(l4): l4 = lks
+
+    ewma   = float(ss.get("score_ewma_4w",             lks))
+    trend  = float(ss.get("score_trend_8w",             0.0))
+    consec = float(ss.get("score_consecutive_nonzero",  0.0))
+    if not np.isfinite(ewma):   ewma   = lks
+    if not np.isfinite(trend):  trend  = 0.0
+    if not np.isfinite(consec): consec = 0.0
+
+    feats.append(l1)
+    feats.append(l2)
+    feats.append(l4)
+    feats.append(ewma)
+    feats.append(trend)
+    feats.append(consec)
+
+    # Decayed versions of lag1 / lag2
+    feats.append(float(l1 * SCORE_ACF_BASE ** max(gw - 1.0, 0.0)))
+    feats.append(float(l2 * SCORE_ACF_BASE ** max(gw - 2.0, 0.0)))
+
+    # Gap monotone transforms (help the tree find the right split boundary)
+    feats.append(float(np.sqrt(max(gw, 0.0))))
+    feats.append(float(np.log1p(max(gw, 0.0))))
+
     # ── 10. Test season distance features ────────────────────────────────────
-    # month_dist_to_test: circular distance from current month to region's test month
-    # is_test_season: within ±2 months of the test season
     if test_month > 0:
         dist = abs(last_month - test_month)
         dist = min(dist, 12 - dist)
     else:
-        dist = 3  # neutral default when test month is unknown
+        dist = 3
     feats.append(float(dist))
     feats.append(float(1 if dist <= 2 else 0))
 

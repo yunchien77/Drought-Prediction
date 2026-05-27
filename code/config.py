@@ -92,7 +92,7 @@ N_PROXY_SIGS             = 7
 PROXY_SAMPLES_PER_REGION = 40
 
 # Increment when feature logic changes to invalidate the feature cache.
-FEATURE_VERSION = 14
+FEATURE_VERSION = 18
 
 # Score autocorrelation base (ACF ≈ 0.96^lag per EDA Section 2)
 SCORE_ACF_BASE = 0.96

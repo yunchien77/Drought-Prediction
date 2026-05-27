@@ -83,13 +83,50 @@ def compute_climatology(train: pd.DataFrame) -> dict:
             return 0
 
     for region, grp in scored.groupby("region_id"):
+        scores_arr = grp["score"].values.astype(np.float32)
+        dates_arr  = grp["date"].values
+        n = len(scores_arr)
+
         last_row = grp.iloc[-1]
         last_sc  = float(last_row["score"])
         last_dt  = str(last_row["date"])
         last_ord = _dt_to_ord(last_dt)
-        if region in sstat_dict:
-            sstat_dict[region]["last_score"]       = last_sc
-            sstat_dict[region]["last_date_ordinal"] = last_ord
+
+        if region not in sstat_dict:
+            continue
+
+        sstat_dict[region]["last_score"]        = last_sc
+        sstat_dict[region]["last_date_ordinal"] = last_ord
+
+        # ── NEW: extended score lag features ─────────────────────────────────
+        # lag1 / lag2 / lag4 (weekly lags, fall back to last_sc if not enough data)
+        sstat_dict[region]["last_score_lag1"] = float(scores_arr[-1]) if n >= 1 else last_sc
+        sstat_dict[region]["last_score_lag2"] = float(scores_arr[-2]) if n >= 2 else last_sc
+        sstat_dict[region]["last_score_lag4"] = float(scores_arr[-4]) if n >= 4 else last_sc
+
+        # EWMA over last 4 weeks (heavier weight on most recent)
+        k = min(n, 4)
+        weights = np.array([0.5 ** (k - 1 - i) for i in range(k)], dtype=np.float32)
+        weights /= weights.sum()
+        sstat_dict[region]["score_ewma_4w"] = float(np.dot(scores_arr[-k:], weights))
+
+        # Linear trend slope over last 8 scored weeks
+        k8 = min(n, 8)
+        if k8 >= 3:
+            x_    = np.arange(k8, dtype=np.float32)
+            slope = float(np.polyfit(x_, scores_arr[-k8:], 1)[0])
+        else:
+            slope = 0.0
+        sstat_dict[region]["score_trend_8w"] = slope
+
+        # Consecutive non-zero weeks immediately before end
+        consec = 0
+        for sc in reversed(scores_arr):
+            if sc > 0:
+                consec += 1
+            else:
+                break
+        sstat_dict[region]["score_consecutive_nonzero"] = float(consec)
 
     # 4. Monthly score means
     reg_score_monthly = (

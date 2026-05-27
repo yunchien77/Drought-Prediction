@@ -13,6 +13,10 @@ from logging_setup import get_logger
 
 log = get_logger("data_pipeline")
 
+# ── NEW: Gap jitter range (weeks). Applied only during training to make the
+#    model robust across different gap distances. Set to 0 to disable.
+GAP_JITTER_RANGE = 2.0   # ± 2 weeks uniform noise
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Date string → ordinal integer (supports year > 9999)
@@ -84,8 +88,6 @@ def _worker_train_region(args: tuple):
             wmo_fw = months[w_start:w_end]
 
             # ── Score Lag Gap Shift ───────────────────────────────────────────
-            # Shift the score lookup backwards by region_gap_wk to simulate
-            # the information state at test time.
             if USE_SCORE_LAG_SHIFT and region_gap_wk > 0:
                 shift_days = int(region_gap_wk * 7)
                 lookup_end = max(0, w_end - shift_days)
@@ -103,7 +105,6 @@ def _worker_train_region(args: tuple):
                 gap_wk      = max(0.0, (target_ord - last_sc_ord) / 7.0) if last_sc_ord > 0 else 52.0
             else:
                 # ── Gap-Adaptive Proxy Fallback ───────────────────────────────
-                # No score available → estimate using proxy rather than region mean.
                 if USE_GAP_ADAPTIVE_FALLBACK and proxy_ridge is not None:
                     try:
                         from proxy import compute_proxy_signals
@@ -116,6 +117,13 @@ def _worker_train_region(args: tuple):
                 else:
                     last_sc = ss.get("reg_mean", 0.5)
                 gap_wk = float(region_gap_wk) if region_gap_wk > 0 else 52.0
+
+            # ── NEW: Gap jitter (training only) ───────────────────────────────
+            # Randomly perturb gap_wk so the model learns to handle a range of
+            # gap distances, preventing overfit to the exact region_gap_wk value.
+            if GAP_JITTER_RANGE > 0:
+                jitter  = rng.uniform(-GAP_JITTER_RANGE, GAP_JITTER_RANGE)
+                gap_wk  = float(max(0.0, gap_wk + jitter))
 
             fv = make_features(
                 win_fw, wmo_fw, rb, rm_df, ss, smo, fw, proxy_ridge,
@@ -166,6 +174,7 @@ def _worker_test_region(args: tuple):
             gap_wk = max(0.0, (target_ord - last_ord) / 7.0)
         else:
             gap_wk = 52.0
+        # No jitter at inference time — use exact gap
         fv = make_features(
             meteo, months, rb, rm_df, ss, smo, fw, proxy_ridge,
             last_known_score=last_sc,
@@ -214,7 +223,9 @@ def build_training_dataset(
     Returns (X, y, groups, time_keys, fw_keys, month_keys).
     month_keys holds the target month for each sample (used by Calendar-Matched Validation).
     """
-    log.info(f"Building training dataset (workers={n_workers}, lag_shift={USE_SCORE_LAG_SHIFT}) ...")
+    log.info(f"Building training dataset (workers={n_workers}, "
+             f"lag_shift={USE_SCORE_LAG_SHIFT}, "
+             f"gap_jitter=±{GAP_JITTER_RANGE}w) ...")
 
     train = _apply_preproc(train, preproc_artifacts)
 
