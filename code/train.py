@@ -17,7 +17,7 @@ from config import (
     USE_GAP_STRATIFIED, N_PH_FOLDS_SECONDARY,
     USE_CALENDAR_SEASON_WEIGHTS, CALENDAR_SEASON_SLACK,
     IN_SEASON_WEIGHT_BOOST, CALENDAR_SEVERE_THRESHOLD,
-    SEED,
+    SEED, USE_DLINEAR,
     ensure_dirs,
 )
 from climatology import compute_climatology, save_climatology, load_climatology
@@ -453,6 +453,23 @@ def main(from_stage: int = 0, force: bool = False):
     log.info("[Stage 5] Calibration + saving ...")
     calibrator = fit_calibrator(oof_preds, y)
     save_models(models, calibrator, oof_mae)
+
+    # ── Stage 5: DLinear (complementary time-series model) ───────────────────
+    if USE_DLINEAR:
+        log.info("[Stage 5] DLinear training ...")
+        t_dl = time.time()
+        try:
+            from dlinear import train_dlinear
+            # Reload train if it was gc'd after Stage 3
+            _train_dl = train if train is not None else load_data()
+            dl_oof_mae = train_dlinear(_train_dl)
+            log.info(f"[Stage 5] DLinear OOF MAE: {dl_oof_mae:.4f}  "
+                     f"({(time.time()-t_dl)/60:.1f} min)")
+        except ImportError as e:
+            log.warning(f"[Stage 5] DLinear skipped — {e}")
+        except Exception as e:
+            import traceback
+            log.warning(f"[Stage 5] DLinear training failed: {e}\n{traceback.format_exc()}")
 
     elapsed = time.time() - t_total
     log.info("=" * 60)

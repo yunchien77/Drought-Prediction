@@ -12,6 +12,7 @@ from config import (
     METEO_COLS, N_PRED,
     USE_PREPROCESSING, PREPROC_PATH,
     USE_CACHE, USE_GAP_STRATIFIED,
+    USE_DLINEAR, DLINEAR_BLEND_WEIGHT,
     ensure_dirs,
 )
 from climatology import load_climatology
@@ -169,6 +170,42 @@ def main(output_path=None, force_rebuild=False):
             test_features, lgbm_models, calibrator, fallback=fallback,
         )
         log.info("  Using main LightGBM")
+
+    # ── DLinear blend ─────────────────────────────────────────────────────────
+    if USE_DLINEAR:
+        try:
+            from dlinear import load_dlinear, predict_dlinear
+            ckpt = load_dlinear()
+            if ckpt is not None:
+                log.info(f"  DLinear blending (weight={DLINEAR_BLEND_WEIGHT}) ...")
+                train_df = pd.read_csv(
+                    TRAIN_PATH,
+                    dtype={c: "float32" for c in METEO_COLS} | {"score": "float32"},
+                )
+                train_df = train_df.sort_values(["region_id", "date"]).reset_index(drop=True)
+
+                dl_preds = predict_dlinear(test, train_df, ckpt)
+
+                w_dl   = float(DLINEAR_BLEND_WEIGHT)
+                w_lgbm = 1.0 - w_dl
+                blended: dict[str, list[float]] = {}
+                for rid, lgbm_p in final_preds.items():
+                    dl_p = dl_preds.get(rid, lgbm_p)   # fallback to lgbm if region missing
+                    blended[rid] = [
+                        float(np.clip(w_lgbm * lgbm_p[i] + w_dl * dl_p[i], 0, 5))
+                        for i in range(N_PRED)
+                    ]
+                final_preds = blended
+                log.info(f"  Blend done: {len(blended)} regions "
+                         f"(LightGBM {w_lgbm:.0%} + DLinear {w_dl:.0%})")
+            else:
+                log.warning("  DLinear checkpoint not found — using LightGBM only")
+        except ImportError as e:
+            log.warning(f"  DLinear skipped — {e}")
+        except Exception as e:
+            import traceback
+            log.warning(f"  DLinear blend failed ({e}), using LightGBM only\n"
+                        f"{traceback.format_exc()}")
 
     # ── Write submission ───────────────────────────────────────────────────────
     sample    = pd.read_csv(SAMPLE_PATH)

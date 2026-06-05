@@ -274,3 +274,35 @@ EARLY_STOPPING_ROUNDS = 150
 # ═════════════════════════════════════════════════════════════════════════════
 
 PROXY_RIDGE_ALPHA = 1.0
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DLinear — complementary time-series model (ensemble with LightGBM)
+# ═════════════════════════════════════════════════════════════════════════════
+
+# Set to True to train DLinear in Stage 5 and blend predictions with LightGBM.
+# Requires PyTorch: pip install torch>=2.0.0
+# Expected Kaggle MAE improvement: ~0.03–0.05 (based on teammate results showing
+#   LightGBM + DLinear blend reduces MAE from 0.83 → 0.787)
+USE_DLINEAR = True
+
+# Raw meteorological lookback window (days).
+# Must match the 91-day window used in LightGBM feature engineering.
+DLINEAR_SEQ_LEN = 91
+
+# Training hyperparameters
+DLINEAR_EPOCHS     = 50
+DLINEAR_BATCH_SIZE = 512
+DLINEAR_LR         = 1e-3
+
+# Moving-average kernel for trend/seasonal decomposition.
+# 25 days ≈ monthly smoothing, good for capturing drought trends.
+DLINEAR_KERNEL_SIZE = 25
+
+# Blend weight for DLinear predictions in the final submission.
+# final_pred = (1 - DLINEAR_BLEND_WEIGHT) * lgbm + DLINEAR_BLEND_WEIGHT * dlinear
+# Teammate optimal: ~0.15–0.25; start with 0.20 and tune if needed.
+DLINEAR_BLEND_WEIGHT = 0.20
+
+# Saved checkpoint path
+DLINEAR_MODEL_PATH = MODELS_DIR / "dlinear.pt"

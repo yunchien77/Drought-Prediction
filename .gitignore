@@ -6,3 +6,6 @@ models/*/*.pkl
 models/*.pkl
 *.pkl
 **/__pycache__/**
+report/*
+models/*
+eval/*
